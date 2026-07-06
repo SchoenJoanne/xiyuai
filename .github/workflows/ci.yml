@@ -1,0 +1,477 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # 🔐 secret-scan(trufflehog) 全史扫描需完整历史（顺带满足 check:release tag 对账）
+          fetch-tags: true   # check:release 的 tag↔package.json 对账需要 tags
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      # photo_aspect_smoke 的转码卡口走真实 ImageMagick convert（与生产同链路）
+      - name: 安装 ImageMagick
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq imagemagick
+
+      - name: 语法检查 (node --check 全 src + scripts)
+        run: find src scripts -name '*.mjs' -exec node --check {} \;
+
+      # v1.21.2 (#263 事故后续)：no-const-assign 等运行时 TypeError 级问题在 CI 抓死。
+      # 红色验证过：对 v1.20.1 坏版本跑能精确报出 'systemPrompt' is constant。
+      - name: ESLint（真 bug 级规则，零风格审美）
+        run: npm run lint
+
+      - name: import 链 smoke
+        run: npm run check:imports
+
+      - name: 字段漂移检查
+        run: npm run check:field-drift
+
+      - name: 发布一致性（版本号↔tag↔README↔ROADMAP↔双语行数）
+        run: npm run check:release
+
+      - name: 发布前自检硬闸（forbidden/secret/prod-path/大文件/.env + 🔴表情包锁发布只发原创 #7）
+        run: bash scripts/opensource_check.sh
+
+      # 🔐 发布卫生门禁（#26·机械③·2026-07-03）：密钥硬扫。当前扫描零命中（key 只入 .env 不入库），
+      #   本步=焊闸防未来密钥误入库。verified+unknown 命中即红。历史扫描依赖上方 fetch-depth:0。
+      - name: 🔐 secret-scan（trufflehog·verified+unknown·发现即红）
+        uses: trufflesecurity/trufflehog@main
+        with:
+          extra_args: --results=verified,unknown
+
+      - name: neglect / 依恋 / reunion smoke
+        run: node scripts/neglect_stage_smoke.mjs
+
+      - name: 共建独特性 shaping smoke
+        run: node scripts/shaping_smoke.mjs
+
+      - name: 初恋特质 smoke
+        run: node scripts/first_love_smoke.mjs
+
+      - name: 人设导出字段对账（防白名单漂移）
+        run: node scripts/persona_export_drift_check.mjs
+
+      - name: 照片链路 issue#237 三连修复回归
+        run: node scripts/photo_fix237_smoke.mjs
+
+      - name: morning 重复早安修复回归
+        run: node scripts/morning_dedup_smoke.mjs
+
+      - name: morning 防穿帮盲区(今早已发过 proactive→不刚醒 + 跨天承接时间窗)
+        run: node scripts/morning_already_up_smoke.mjs
+
+      - name: 主动消息同义复读防护回归
+        run: node scripts/proactive_dedup_smoke.mjs
+
+      - name: proactive 失败不发兜底句（P2-A：reply 兜底句不泄漏进主动消息·治 BUG-P2"走神"·契约+caller接线双层·强制no-network）
+        run: node scripts/proactive_fallback_smoke.mjs
+
+      - name: proactive 冷开场语义+time-gap（P2-B：reply续话不变/proactive重新开口·两gap+第三布尔·禁续话语义·守PR-2红线·纯函数零网络）
+        run: node scripts/proactive_coldopen_smoke.mjs
+
+      - name: proactive 开场多样化（P1：开场由头跨会话记账·只存type不存内容·classify分类/other不记/真实送达才记/不进ALLOWED_FIELDS·reply不渲染）
+        run: node scripts/proactive_opening_smoke.mjs
+
+      - name: proactive 人设语气稳定化（P1-③：persona-derived tone guard·端着不飘温柔/混合不压暖/anxious拍平·坏版本验红）
+        run: node scripts/persona_tone_guard_smoke.mjs
+
+      - name: 自称第三人称守卫·去名字硬编码（self_third_person 按 companion.name 动态构造·非溪语角色不再漏抓/元字符转义/空名 fail-open/sanitize 同步·坏版本验红）
+        run: node scripts/persona_self_third_person_smoke.mjs
+
+      - name: 内容边界·越界应对（v1.24：他想越界/闯祸→接住不递刀不怂恿不说教·向着你问法/严重暴力临时保底/防矫枉·结构闸·坏版本验红）
+        run: DB_PATH=/tmp/cb_ci.db node scripts/content_boundary_transgression_smoke.mjs
+
+      - name: 凭空用户态（v1.25：reply+proactive 两路径通治·砍凭空断定用户即时态/习惯(手柄/喝酒)·🔴锁放行开放关心(累不累/吃了没/在干嘛)防矫枉·结构闸·坏版本验红）
+        run: DB_PATH=/tmp/nf_ci.db node scripts/content_no_fabrication_smoke.mjs
+
+      - name: 贴纸节流（v1.27：P1密度回拨3-5/D1整条至多1张+enabled出口硬闸+非法标记不外漏/D2轮次冷却/D3断棘轮·坏版本验红七闸）
+        run: DB_PATH=/tmp/st_ci.db node scripts/sticker_throttle_smoke.mjs
+
+      - name: 贴纸情境门控（v1.28·缺口②：吵架冲突态/危机轮不注入贴纸·纯函数stickerContextBlocked·双向红验+OFF字节等价+5场景/三态/危机全档/esc≥2/proactive arc-only）
+        run: node scripts/sticker_context_gate_smoke.mjs
+
+      - name: 防沉迷连续使用2h提示（法规②·计时/照片锚点保活H1/去重节奏/协调让路/运行时红线assert/fail-open/闸关inert·坏版本验红）
+        run: DB_PATH=/tmp/aa_ci.db node scripts/anti_addiction_smoke.mjs
+
+      - name: 防沉迷 gap 阈值校准脚本（确定性回测·合成库·零真实数据·停板A#1改判留档）
+        run: node scripts/usage_interval_calibration_smoke.mjs
+
+      - name: 防沉迷提示措辞常驻守卫（VARIANTS 会被改的文案→任何措辞改动机器先审词面:红线/精度/时长事实/跨度真实性·结构消除>靠人记得）
+        run: node scripts/anti_addiction_preview.mjs
+
+      - name: 即时状态锚定（P2→P1：buildPresenceAnchor 否定式硬锚·schedule override/周末/recency/merge白名单·坏版本验红）
+        run: DB_PATH=/tmp/ia_ci.db node scripts/instant_state_anchor_smoke.mjs
+
+      - name: 完整作息/日程系统（5身份作息档·个体派生不雷同·日历轴/寒暑假/节假日·🔴有限度趋同双向验红:用户熬夜钳基线±窗不跟到底/正常偏移趋同还在·存量迁移拉回窗内）
+        run: DB_PATH=/tmp/ds_ci.db node scripts/daily_schedule_smoke.mjs
+
+      - name: 主动话题开新话头（回库·分享非挽留·防打断三重门·出站反愧疚·坏版本验红）
+        run: node scripts/topic_opener_smoke.mjs
+
+      - name: topic松绑（🔴主刀每日预算·日界重置非时间·坏版本验红:进程永不重置→次日仍堵/主刀→次日能再开·fail-silent·不读沉默焊死行·取料扩面works）
+        run: DB_PATH=/tmp/tl_ci.db node scripts/topic_loosen_smoke.mjs
+
+      - name: 语义/intent 级复读止血（PR-1：intent 分类/冷却/ack 闸·守住早安续命器·存量序列红验）
+        run: node scripts/intent_dedup_smoke.mjs
+
+      - name: proactive 主动行为调度层（PR-2 降噪+矜持化：7类分类/静默闸早安豁免/想你三档drop/photo48h限频/不勒索）
+        run: node scripts/proactive_policy_smoke.mjs
+
+      - name: P1-① 焦虑/脆弱隔离（升格只认中性·脆弱veto混合句·只锁主动出口·坏版本验红5场景）
+        run: node scripts/proactive_anxiety_isolation_smoke.mjs
+
+      - name: 频率语义档 leaky 修干净（实跑真实 ensureTodaySchedule·target=0 闸开真零/闸关旧 leaky·映射4/2叠busyFactor·灰度闸默认关零变更）
+        run: node scripts/proactive_freq_semantic_smoke.mjs
+
+      - name: voice security（voice_style 受控枚举防注入入库·voice_speed clamp[0.5,2.0]·createCompanion roundtrip·迁移覆盖·确定性底透传·坏版本验红）
+        run: node scripts/voice_security_smoke.mjs
+
+      - name: persona_prompt 注入硬化（长度上限≤600·b 定界+c 结构化灰度闸两态·合法人设不误伤结构层·:596 强度没削·坏版本验红）
+        run: node scripts/persona_prompt_hardening_smoke.mjs
+
+      - name: A2 kaomoji 矛盾条件化（停板B·§8允许↔§18禁令并存矛盾解除·use_kaomoji=0字节一致/=1禁令不渲染·邻行零牵动·坏版本验红）
+        run: DB_PATH=/tmp/km_ci.db node scripts/kaomoji_conditional_smoke.mjs
+
+      - name: A3 日记配置单源（停板B·D5：长度/maxTokens 抽 diary_config·默认=现值字节一致·dash 各保 en/hyphen·散落字面量移除·坏版本验红）
+        run: node scripts/diary_config_source_smoke.mjs
+
+      - name: A1 时态锁单源防漂（停板B·D3批1条目9：presence/coherence/lockTense→tense_lock_terms权威源·companion守零依赖用本地副本+CI锁字节一致·坏版本验红）
+        run: DB_PATH=/tmp/tl_ci.db node scripts/tense_lock_single_source_smoke.mjs
+
+      - name: 批B1 六改写对落码守卫（停板B·D3批1纯去重：§18长度单一化/§9反例瘦身/语气节奏并块/名字插值/演足移§16·neu在old消·坏版本验红）
+        run: DB_PATH=/tmp/b1_ci.db node scripts/d3_batch1_dedup_smoke.mjs
+
+      - name: 批B2 常驻压缩守卫（停板B·D3批2条件化：⑤b身份I1-3/⑤a照片全档压缩+⑨初恋stage条件化·暧昧字节一致·关键红线逐字·:196焊死·坏版本验红）
+        run: DB_PATH=/tmp/b2z_ci.db node scripts/d3_batch2_compress_smoke.mjs
+
+      - name: 批B2 条件块接线canary（停板B·D3批2：RE_IDENT_PROBE直问-AI/框架/套设定→ident_probe→IDENT_COND·PHOTO_COND索图轮复用photoIntent同源·不误伤既有intent·坏版本验红）
+        run: DB_PATH=/tmp/b2c_ci.db node scripts/b2_cond_blocks_smoke.mjs
+
+      - name: 07-15合规⑥ 人设软化拼接自检+guard（确定性·软化三句在/旧硬否认消/guard仍抓我是AI·真LLM三验另手动跑）
+        run: DB_PATH=/tmp/pp_soft_ci.db node scripts/compliance_persona_softening_realllm.mjs
+
+      - name: 情绪机 1000 轮压测 + fuzzing
+        run: node scripts/emotion_stress_test.mjs
+
+      - name: 危机干预 safety 护栏
+        run: node scripts/safety_smoke.mjs
+
+      - name: 危机检测扩词 召回↑ + benign precision 不崩（坏版本验红）
+        run: node scripts/crisis_pattern_smoke.mjs
+
+      - name: 梗词白名单谓词 isPureMemeWhitelist（停板A primitive·整串纯玩梗·坏版本验红）
+        run: node scripts/meme_whitelist_smoke.mjs
+
+      - name: 未成年人保护 minor guard 护栏
+        run: node scripts/minor_guard_smoke.mjs
+
+      - name: child-safety 写咽喉派生（补闸⑥A：age<18→强制 safe_mode=1+关系封顶朋友·db createCompanion/updateCompanion 绕不过·不误锁成年/无龄·坏版本验红）
+        run: DB_PATH=/tmp/msi_ci.db node scripts/minor_safety_invariant_smoke.mjs
+
+      - name: child-safety 出图 age 硬闸（补闸⑤·第二层独立 safe_mode：isPhotoChildSafe age<18 钳中性+候选锁脸拒·坏版本验红）
+        run: DB_PATH=/tmp/pag_ci.db node scripts/photo_age_hardgate_smoke.mjs
+
+      - name: child-safety 用户侧 nsfw 年龄门（步④：getUserAgeStatus canNsfw 阈值 16→18·与 isMinor=age<18 对齐·坏版本验红）
+        run: DB_PATH=/tmp/una_ci.db node scripts/user_nsfw_age_gate_smoke.mjs
+
+      - name: 隐私过滤 privacy filter 护栏
+        run: node scripts/privacy_filter_guard.mjs
+
+      - name: sandbox 源库 fail-closed（chip①·PIPL：无显式源必抛·绝不默认拷生产库·坏版本验红空env必抛）
+        run: node scripts/sandbox_src_failclosed_smoke.mjs
+
+      - name: 冲突与和好弧 状态机转移表
+        run: node scripts/conflict_arc_smoke.mjs
+
+      - name: 冲突与和好弧 落库链 e2e
+        run: node scripts/conflict_arc_e2e.mjs
+
+      - name: 批E·D4 情绪引擎基础（E0c 闸三态/三段半衰/慢层cap/怒退悲显/铁线无contempt）
+        run: node scripts/d4_emotion_engine_smoke.mjs
+
+      - name: 批E·E0b 存量 arc→引擎迁移（折算防旧情绪再注/scar不扣trust/幂等/铁线）
+        run: DB_PATH=/tmp/e0b_mig_ci.db node scripts/e0b_arc_migration_smoke.mjs
+
+      - name: 批E·D4 OCC 评价（怒悲同注/滞后/importance/🔴铁线沉默量注入即报错/零contempt）
+        run: node scripts/d4_appraisal_smoke.mjs
+
+      - name: 批E·D4 再评价算子（同源加速/换视角/🔴缺席绝不反向单调）
+        run: node scripts/d4_reappraise_smoke.mjs
+
+      - name: 批E·D4 engine_calmed 收敛（读同源强度非沉默/repairing排除/闸OFF字节安全）
+        run: DB_PATH=/tmp/calmed_ci.db node scripts/d4_engine_calmed_smoke.mjs
+
+      - name: 批E·V2 手术（neglect阶梯退役/保留faded·ops_clamp·safe_mode/体零neg静态锁/分派fork）
+        run: node scripts/d4_tickarc_v2_smoke.mjs
+
+      - name: 批E·时间tick接缝（companionId闸路由/迁移lazy/engine_calmed wiring/fail-open/闸OFF字节安全）
+        run: DB_PATH=/tmp/seam_tt_ci.db node scripts/d4_seam_timetick_smoke.mjs
+
+      - name: 批E·信号双写接缝（冲突→脉冲同event_id/apology同源加速/闸OFF字节安全）
+        run: DB_PATH=/tmp/seam_dw_ci.db node scripts/d4_seam_double_write_smoke.mjs
+
+      - name: 批E·闸ON臂断言集（E0a 22红族→V2退役正向/L234·L95非vacuous/16暧昧四组）
+        run: node scripts/d4_gate_on_arm_smoke.mjs
+
+      - name: 批E·② 表达单源=引擎 hint（E4味道库/怒退悲显/迁移平静/零hint平静不宣布/铁线零机制词）
+        run: DB_PATH=/tmp/ehint_ci.db node scripts/d4_engine_hint_smoke.mjs
+
+      - name: 批E·E5④ wechat_messages 索引（_countInboundSince 全表扫→SEARCH USING INDEX·崖消）
+        run: DB_PATH=/tmp/e5widx_ci.db node scripts/e5_wechat_index_smoke.mjs
+
+      - name: 批E·E5① X/repair 叙事事件语境闸（未道歉绝不"他道了歉"·U_HI优先·U_LOW_repair同受闸）
+        run: DB_PATH=/tmp/e5hctx_ci.db node scripts/e5_hint_event_context_smoke.mjs
+
+      - name: 批E·E5③ hint 变体轮换+冷却（低悲/迁移平静 round-robin·连打1648→数十·场景档不轮换）
+        run: DB_PATH=/tmp/e5rot_ci.db node scripts/e5_hint_rotation_smoke.mjs
+
+      - name: 批E·E5②(B1) self 次日自我消化接线（清unresolved·数天衰过floor+盘活calmed·当轮不许+每日一次·零触碰）
+        run: DB_PATH=/tmp/e5self_ci.db node scripts/e5_self_digest_smoke.mjs
+
+      - name: 冲突红线护栏 + 危机覆盖
+        run: node scripts/conflict_redline_guard.mjs
+
+      - name: 凭空身体事件出站闸（#317 四档·v1.22 PR-L1：severe 无条件/diagnosed 查档案/symptom 放行）
+        run: node scripts/fabricated_illness_smoke.mjs
+
+      - name: life_state 引擎+生理期门控（v1.22 PR-L1 引擎/tick + PR-L2 三道门控：防同步/披露/成年）
+        run: node scripts/life_state_smoke.mjs
+
+      - name: life_state 情绪路由+PMS shadow（v1.22 PR-L3：bodyLowEnergy 让位/patTone 不写回/shadow 红线A·B·C/合成上限）
+        run: node scripts/life_state_emotion_smoke.mjs
+
+      - name: proactive 死人开关心跳
+        run: node scripts/proactive_deadman_smoke.mjs
+
+      - name: 死人开关告警出口（v1.21.6 接线：返回 message-id/从 env 取址/空收件人显式 WARN）
+        run: node scripts/deadman_alert_smoke.mjs
+
+      - name: 照片比例（机位路由 + 转码卡口）
+        run: node scripts/photo_aspect_smoke.mjs
+
+      - name: 照片无脸闸走权威 shotMode（接线第六案：ACTIVITY_POV/SCENERY 确定性无脸·不靠文本嗅探·LLM 漂移也兜住）
+        run: node scripts/photo_noface_gate_smoke.mjs
+
+      - name: proactive 素材级去重（冷却/归因/作用域钉死）
+        run: node scripts/proactive_material_smoke.mjs
+
+      - name: 环境fact去重·月相相位档（v1.26 ③：env:moon:<phaseName> 无日期·冷却5天·中秋元宵豁免·fail-open·🔴仅proactive口·reply/photo隔离·坏版本验红）
+        run: DB_PATH=/tmp/envf_ci.db node scripts/env_fact_dedup_smoke.mjs
+
+      - name: 称呼泄漏（"用户"零残留 + 写入端护栏）
+        run: node scripts/user_wording_guard.mjs
+
+      - name: 互动历史回填自动化（决策表/水位/防重）
+        run: node scripts/backfill_auto_smoke.mjs
+
+      - name: 入站去重（#279 上下文去重 + 协议重推，双向红色验证）
+        run: node scripts/inbound_dedup_smoke.mjs
+
+      - name: 表情冒充照片护栏（#281 双向红色验证）
+        run: node scripts/photo_impersonation_smoke.mjs
+
+      - name: 标注语料工具（CRUD/导出/admin 鉴权）
+        run: node scripts/annotation_smoke.mjs
+
+      - name: 照片承诺生命周期（PR-B 可行性闸门/超时兜底/改期履约）
+        run: node scripts/photo_promise_smoke.mjs
+
+      - name: 月相锚定（PR-C 纯数学/物理锚点/红色验证）
+        run: node scripts/moon_phase_smoke.mjs
+
+      - name: 照片 planner prompt 字符串（v1.21.6 P0 静默断图回归锁）
+        run: node scripts/photo_planner_prompt_smoke.mjs
+
+      - name: digest 错误扫描范围（v1.21.6 报警盲区：高信号 [WARN] 升格 + 噪声不灌）
+        run: node scripts/digest_error_scan_smoke.mjs
+
+      - name: 照片品类加权采样（v1.21.6 PR-A 配置基建/默认关/weeklyCap/fail-open）
+        run: node scripts/photo_categories_smoke.mjs
+
+      - name: 想到你品类素材选择（v1.21.6 PR-B 指向正确/雷区·隐私零选用/14天冷却）
+        run: node scripts/photo_thought_smoke.mjs
+
+      - name: 日出日落纯数学（v1.21.6 PR-C 晚霞窗口/物理合理性/注入红验）
+        run: node scripts/sun_times_smoke.mjs
+
+      - name: 上海时区 helper（getHours P1：TZ无关绝对正确/CST不变量mismatch=0/UTC修正03:40/成年校验跨年边界·CI跑Asia/Shanghai+UTC双TZ）
+        run: TZ=Asia/Shanghai node scripts/timezone_smoke.mjs && TZ=UTC node scripts/timezone_smoke.mjs
+
+      - name: reality facts 真实世界事实层（v1.21.4 PR-W3 节气/农历天文计算+注入纪律不编造）
+        run: node scripts/reality_facts_smoke.mjs
+
+      - name: 照片锚定与护栏注入（v1.21.6 PR-C 封面/天气/日落/互拍/candid）
+        run: node scripts/photo_anchor_smoke.mjs
+
+      - name: current_works 真实性验证双闸（v1.21.4 PR-W1 红验①②③ + 虚构书拦截）
+        run: node scripts/current_works_smoke.mjs
+
+      - name: current_works 表达层（v1.21.4 PR-W2 注入排序/冷却放行双向/存量退场/归档）
+        run: node scripts/current_works_expression_smoke.mjs
+
+      - name: current_works 日程结构化（v1.21.4 PR-W5 日程消费档案/progress 渐进/life_state 预留）
+        run: node scripts/works_schedule_smoke.mjs
+
+      - name: 日程 continuity/works 去双锚（P1·坏版本验红：作品进度单一权威源=works·continuity 过滤重名条目/不误伤生活事件/正常 companion byte-identical/冻结存量未成年 排除/1字标题不过度匹配）
+        run: DB_PATH=/tmp/sched_dedupe_ci.db node scripts/schedule_continuity_works_dedupe_smoke.mjs
+
+      - name: proactive digest 旁路素材冷却闸门（接线类第五案：daily_summary 形态 复读修+双向红验）
+        run: node scripts/proactive_digest_cooldown_smoke.mjs
+
+      - name: 头像反恐怖谷（2026-06-13 删四 doll-face 触发词+真实肤质单一来源/塑料黑名单自检）
+        run: node scripts/avatar_prompt_smoke.mjs
+
+      - name: 生图 P0 身份描述符明确成年（child-safety·红线#4：buildVisualIdentitySpec 锚定成年+age入参/ageVibe抬下限/age缺失成年fallback/护栏不削弱/冻结存量未成年 byte-identical；v1.23.1去老态·v1.23.2中国脸+真人质感·v1.23.3颜值+去假发感）
+        run: DB_PATH=/tmp/img_adult_ci.db node scripts/image_identity_adult_floor_smoke.mjs
+
+      - name: 生图 P0 photo_planner 中国脸+镜子自拍+明确成年（v1.23.3：SELFIE mirror构图/rule4族裔锚East Asian Chinese/clearly-adult锚/未成年黑名单仍在/safe_mode→SCENERY）
+        run: DB_PATH=/tmp/pp_china_ci.db node scripts/photo_planner_china_mirror_smoke.mjs
+
+      - name: 记忆 chip↔layer 双向对账（2026-06-12 删死枚举 chip 后防空抽屉/防有数据无窗口）
+        run: node scripts/memory_chip_parity_smoke.mjs
+
+      - name: reflection 批产出心跳 emit↔parse 契约（2026-06-12 防"永远无心跳"假警报漂移）
+        run: node scripts/reflection_heartbeat_smoke.mjs
+
+      - name: saveMemory 契约对齐 + layer→type 边界映射（2026-06-12 A 纯加法/B 映射不到必 reject）
+        run: node scripts/reflection_memory_mapping_smoke.mjs
+
+      - name: 记忆 importance 钳位（chip③·月压缩 importance=15 撞 CHECK(1-10)→双层 clamp·坏版本验红 raw INSERT 15 必 throw）
+        run: DB_PATH=/tmp/mic_ci.db node scripts/memory_importance_clamp_smoke.mjs
+
+      - name: 召回硬过滤（批D·件①·信任事故·route≠filter：recallMemories/Semantic SQL WHERE 补 memory_status=active+do_not_mention 双过滤·单源常量·验archived+imp10不出列=filter胜ordering·坏版本红验）
+        run: DB_PATH=/tmp/d2rf_ci.db node scripts/d2_recall_filter_smoke.mjs
+
+      - name: auto-pin decay 读侧治理（批D·件③a·computeMemoryDecay ignoreAutoPin·locked-first·auto-pin[pinned∧imp<9]褪色/user-pin·locked永活/默认零变更·坏版本红验）
+        run: node scripts/d2_autopin_decay_smoke.mjs
+
+      - name: recall decay 打分接线（批D·件③b·零依赖叶子memory_decay·D2-1公式weight/imp/decay×.3/major/ctx·近期语境登顶/远期auto-pin琐事出top7·自旋子进程MEM_SCORE_W_DECAY=0坏版本红验）
+        run: node scripts/d2_recall_decay_smoke.mjs
+
+      - name: 记忆时间分层渲染（批D·件②·D2-2·≤30天全文/31-90一句化「（有段时间了）」/>90仅大事「（几个月前）」上限2·前缀内联CI字节锁·坏版本红验）
+        run: node scripts/d2_render_tier_smoke.mjs
+
+      - name: bigram 召回修（批D·件④·D2-5·CJK2字滑窗+停用词·修中文整串keyword几乎不命中老病·E2E ctxBoost差分·坏版本红验）
+        run: node scripts/d2_bigram_recall_smoke.mjs
+
+      - name: open_loops 生命周期状态机（批D·件⑤·考试案四环·open→resolved→expired→注入上限·分层2/7/14天·CHECK加expired表重建迁移+数据保全·三处同源·坏版本红验）
+        run: node scripts/d2_open_loops_lifecycle_smoke.mjs
+
+      - name: digest 长尾入口（批D·件⑥·D2-3·>3月零入口修复·imp≥8||locked老片段一句化上限3·复用件①硬过滤·过冷却闸门·坏版本红验）
+        run: node scripts/d2_digest_longtail_smoke.mjs
+
+      - name: 场景状态持久化（#324 失忆修：current_scene 事件驱动持久 + 约定注入 + TTL 清场）
+        run: node scripts/scene_state_smoke.mjs
+
+      - name: proactive 三桶心跳 emit↔parse 契约（2026-06-13 deadman 信号分离·防"永远无心跳"漂移）
+        run: node scripts/proactive_heartbeat_smoke.mjs
+
+      - name: digest 轮转感知日志读取（2026-06-14 B 修·集成红验：跨 bot.log/.1/.gz + 窗口过滤 + reject 分级）
+        run: node scripts/digest_log_rotation_smoke.mjs
+
+      - name: playground 对外通道每日探针（2026-06-13 #310 系统解：接线必叫/provider 软处理/零污染）
+        run: node scripts/playground_probe_smoke.mjs
+
+      - name: 真实留存看板口径（PR-0：synthetic 切分/留存窗口/proactive 判定/复读检出·防北极星仪表口径漂移）
+        run: node scripts/retention_board_smoke.mjs
+
+      - name: proactive 时序·注入时钟（clock.mjs：早安续命器时序/静默闸计数边界/photo48h/morning12h/夜间静默/退场·mock·¥0）
+        run: node scripts/proactive_clock_smoke.mjs
+
+      - name: proactive 连续多天 timeline（clock harness：7天高速推进·早安续命跨天/24h窗口关·重开边界/连发静默闸/lastcall/photo48h·mock·¥0）
+        run: node scripts/proactive_timeline_smoke.mjs
+
+      - name: persona/共同往事 硬事实守卫（PR-3·A：canonical分层/脏persona不覆盖identity/意图6类/共同往事span确认式复述gate双向）
+        run: node scripts/fact_guard_smoke.mjs
+
+      - name: topic-aware canonical 召回（PR-3.1·A 治洞B：49条爸爸职业第30条召回置顶triggered/content优先/A只渲染事实不渲染行为/负例）
+        run: node scripts/fact_topic_recall_smoke.mjs
+
+      - name: 行为层闭域 gate（PR-3.1·B 治洞A/C·防误伤：conflict才fire/有支持放行/否定·RP优先放行/fallback带真值/负例不拦）
+        run: node scripts/fact_behavior_gate_smoke.mjs
+
+      - name: 年龄 scan 单源字节锁（批C·D1期1·第0步·尺v1.1 15探针 bad咬/good放·无状态检测+trueAge消费者比对+四放行守卫+AGE_QUESTION四变体）
+        run: node scripts/fact_age_scan_smoke.mjs
+
+      - name: G1 年龄漂移出站门（批C·C2·scrubSelfIdentityNumberDrift·AI自发域第四门·模式a/b·drop命中段+软纠正真值·否定/引用/第三人/单位/RP用户起头放行·多段/fail-open·坏版本红验）
+        run: node scripts/c2_g1_age_drift_smoke.mjs
+
+      - name: M1b inside_joke 梗年龄毒化过滤（批C·C3·stripAgeYearDrift 精确N岁·剥数字→同源复检→仍脏reject+计数·防矫枉22岁梗放行·非岁数字不误咬·memory接线+fail-open·坏版本红验·M1a降级子问题）
+        run: node scripts/c3_m1b_age_poison_smoke.mjs
+
+      - name: P2 入站直问年龄触发面（批C·C1·detectFactTopics 放宽单源 AGE_QUESTION_RE 修邻接漏检+classifyFactIntent 新 age_probe intent[年龄真值锚快照·非ident_probe套设定]·distinct不抢mistaken_id·仅直问轮注入·坏版本红验）
+        run: node scripts/c1_p2_age_probe_smoke.mjs
+
+      - name: character_seed 输入漏斗+validator（PR-3.2·A 无LLM：validity5类/冲突3表tension不误杀/legacy_passthrough/关系隔离不误伤/child安全强不合理职业/scope=self/values derived）
+        run: node scripts/character_seed_smoke.mjs
+
+      - name: character_seed 生成器（PR-3.2·B mock·llm注入：危险call0/relationship不进生成/unknown reject/retry带violations/child safety/B只写meta）
+        run: node scripts/character_seed_gen_smoke.mjs
+
+      - name: character_seed meta→facts 桥（PR-3.2·C1 纯转换：形状/family保守映射/father_occupation咬合/优先级 generated>普通persona>safe_default/零泄漏/永不identity_core/不接线）
+        run: node scripts/character_seed_bridge_smoke.mjs
+
+      - name: self_facts scope=self 泄漏修复（P1·坏版本验红：A1'入口句级去噪kept零关系命中/A2出口禁词单一来源补全8词·在一起条件判定/A3补丁collectSeedPoints空才safe_default防误删probe4/A4·A5去重/恢复确定性/不误伤正常）
+        run: DB_PATH=/tmp/sfleak_ci.db node scripts/self_facts_scope_self_leak_smoke.mjs
+
+      - name: self_seed 召回接入（PR-3.2·C2 改prompt：dedup三层 canonical>seed>persona/SRC加3.5不回归/critical self槽75提权+seedOwned压制/safe_default不压/青梅竹马双向/identity·triggered必保/proactive不碰）
+        run: node scripts/fact_self_seed_recall_smoke.mjs
+
+      - name: self_seed 软常驻层（PR-3.2·C3 治乙：reply含软段/默认安全proactive·playground不开/null·values-only不渲/软硬同源字节一致/创建链通电）
+        run: node scripts/self_seed_softlayer_smoke.mjs
+
+      - name: 睡眠闸级联修复（SLEEP_GUARD·A睡眠期away不冒泡/morning豁免·C临醒叫醒/🔴深夜不漏missed/missed解耦排空/闸关零变更）
+        run: node scripts/sleep_guard_smoke.mjs
+
+      - name: 静态生活地基（LIFE_FOUNDATION·🔴跨对话城市恒定/协调一致/不报专名/老家避省/🔴identity自适应/闸关零变更）
+        run: node scripts/life_foundation_smoke.mjs
+
+      - name: 最低年龄16→18·路线A(保留highschool冻结存量兼容层)（🔴未来新建<18三路拒route/db/import·age18放行·冻结存量未成年完全不变age16→highschool/teen渲染+正常update不被拦·18+断highschool·兼容层还在·确定性底<18安全网在）
+        run: node scripts/min_age_18_smoke.mjs
+
+      - name: 作息双源对齐(SCHEDULE_WAKE_ALIGN·默认关)（🔴daily日程起床项贴sleep_schedule权威·单向sleep→daily只读不写·冻结存量未成年 age<18明确排除·null回退routineSleepBaseline非07:30·软约束不钉死·闸关零变更）
+        run: node scripts/schedule_wake_align_smoke.mjs
+
+
+      - name: Step0 reply路径reach-guard补完(独立闸REPLY_REACH_GUARD·砍质问施压/记仇·保留温暖在意)（🔴reply质问被砍vs闸关红基线·久别想你/reunion和好/≥7天退潮/想念没误伤·neglect记仇账本砍真冲突照常·idle24-96h不再wronged/cold施压·冻结存量未成年身份无关去施压·🔴两闸解耦reply不牵连proactive·默认关零变更）
+        run: DB_PATH=/tmp/rrg_ci.db node scripts/reply_reach_guard_smoke.mjs
+
+      - name: 社交圈Step1(reply按需召回+1闺蜜锚·SOCIAL_CIRCLE默认关)（🔴零涉用户drop隐蔽句式·正常社交pass·零代词含他/正向转述也drop·闺蜜认识我吗边界·按需注入危机/情绪不注入·防假id-seeded不蹦新名·Step1零proactive零memories写入·age<18排除冻结存量未成年·独立通道不并emotionHint）
+        run: DB_PATH=/tmp/sc_ci.db node scripts/social_circle_smoke.mjs
+
+      - name: 社交圈3真问题同批修(SOCIAL_CIRCLE闸内·全栈红队复现)（🔴#1 {}穿帮退化判不入库+渲染二次guard挡存量+maxTokens512·#2 intent扩召回容修饰词不误召回我-led·#3 我俩堵+他俩plural第三方放行+他人/裸单数他仍drop·不碰其他闸/冻结存量未成年仍socialAllowedFor=false）
+        run: DB_PATH=/tmp/scd_ci.db node scripts/social_circle_defects_smoke.mjs
+
+      - name: 社交圈开闸前置·闺蜜名单一事实源统一(character_seed 友名←social_circle pickFriendAnchor·穿帮解)+用户问起→他问起reword(死文本用户保留)
+        run: node scripts/social_bestie_unify_smoke.mjs
+
+      - name: skill(学技能)品类Step1(current_works加第6品类·WORKS_SKILL默认关)（🔴进度单调升不回退·挫折非state不博同情纯成就文案·免验零webSearch·和craft不混在学vs手上在·不额外加槽maxActive2·gen自我导向·归档召回·闸关gen无skill零变更·不碰现有5品类/社交圈）
+        run: DB_PATH=/tmp/skill_ci.db node scripts/skill_kind_smoke.mjs
+
+      - name: proactive不认作息修复(C软正向护栏+D worksHint锁时态+B锚认日程·PROACTIVE_ROUTINE_COHERENCE默认关)（🔴现象1刚醒不再刚把书看完·现象2课中不再刚吃早餐·C掐种子覆盖normal/lastcall·D锁在看不被说成刚看完·B大学生对冲band塌case建busyOut·proactive-only不碰reply·正交不碰reach/sleep/social·冻结存量未成年排除·防日程脏数据）
+        run: DB_PATH=/tmp/prc_ci.db node scripts/proactive_routine_coherence_smoke.mjs
+
+      - name: G1此刻状态单源(presence/coherence自相矛盾根治·resolveWhereNow curAct-first+过期窗120)（🔴G1复现+两源一致(图书馆vs食堂矛盾根除)·过期窗120边界(12:00食堂@15:39过期/09:00课@10:00保留/14:00在家@16:00边界保留)·B不回归(worker fresh工作项锚具体·防穿帮没削弱)·C/D不回归·reply主体band锚不变去stale括号·冻结存量未成年排除·闸关零变更）
+        run: DB_PATH=/tmp/g1_ci.db node scripts/g1_present_state_unify_smoke.mjs
+
+# 注：check:p0 / smoke(release_smoke_test.sh) 含 HTTP 探测，需服务在 :3000，
+# 暂未进门禁（在 CI 无服务会红）。后续给它们加 SKIP_HTTP 模式再接入。

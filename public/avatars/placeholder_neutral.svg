@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200" role="img" aria-label="头像占位图（年龄中性·非人脸）">
+  <!-- 溪语 AI · 未成年角色形象安全占位图 · 抽象剪影·非拟真·无五官·年龄中性 · 2026-07-03 -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#eef1f6"/>
+      <stop offset="1" stop-color="#d6dce7"/>
+    </linearGradient>
+  </defs>
+  <rect width="200" height="200" rx="28" fill="url(#bg)"/>
+  <!-- 中性头肩剪影（无面部特征·非拟真） -->
+  <g fill="#a6b1c6">
+    <circle cx="100" cy="76" r="30"/>
+    <path d="M44 180 a56 56 0 0 1 112 0 Z"/>
+  </g>
+</svg>

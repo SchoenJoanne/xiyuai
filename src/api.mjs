@@ -3118,8 +3118,13 @@ router.post('/companions/:id/visual-identity/lock',
     }
     const srcPath = candidatePath(id, fname);
     if (!srcPath) return err(res, '候选图不存在或已过期', 404);
+    // resetVisualIdentity 会清空 candidates 目录（v1.23 child-safety），会把 srcPath 一并删掉；
+    // 先把选中候选图拷到 companionDir 根目录（reset 只清 candidates/references 子目录），reset 后再存为 reference。
+    const _lockTmp = path.join(path.dirname(path.dirname(srcPath)), '_lockpick' + path.extname(srcPath));
+    writeFileSync(_lockTmp, readFileSync(srcPath));
     resetVisualIdentity(id);
-    const saved = saveReferenceImage(id, srcPath);
+    const saved = saveReferenceImage(id, _lockTmp);
+    try { unlinkSync(_lockTmp); } catch (_) {}
     if (!saved) return err(res, '保存 reference 失败', 500);
     log('info', `[API] identity locked companion=${id} fname=${fname}`);
     return ok(res, { locked: true });
